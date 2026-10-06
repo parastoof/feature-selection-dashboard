@@ -3,7 +3,11 @@ import pandas as pd
 
 from utils.preprocessing import (identify_features, build_preprocessor, analyze_columns)
 from utils.feature_selection import run_feature_selection
-
+from utils.evaluation import (
+    split_data,
+    build_model,
+    evaluate_model
+)
 
 # Page Configuration
 st.set_page_config(page_title="Feature Selection Dashboard", page_icon="📊", layout="wide")
@@ -268,6 +272,168 @@ if uploaded_file is not None:
                 hide_index=True
             )
 
+        # --------------------------------------------------
+        # 10. Model Evaluation
+        # --------------------------------------------------
+
+        st.subheader("10. Model Evaluation")
+
+        st.markdown(
+            """
+            Compare model performance before and after
+            feature selection.
+            """
+        )
+
+
+        evaluate_models = st.button(
+            "Evaluate Feature Selection",
+            type="primary"
+        )
+
+
+        if evaluate_models:
+
+            if "feature_selection_results" not in st.session_state:
+
+                st.warning(
+                    "Run feature selection first."
+                )
+
+            else:
+
+                results = st.session_state[
+                    "feature_selection_results"
+                ]
+
+                # --------------------------------------------------
+                # Train / Test Split
+                # --------------------------------------------------
+
+                X_train, X_test, y_train, y_test = split_data(
+                    X_processed,
+                    y,
+                    problem_type=problem_type,
+                    test_size=0.2,
+                    random_state=42
+                )
+
+
+                evaluation_results = []
+
+
+                # --------------------------------------------------
+                # Baseline Model
+                # --------------------------------------------------
+
+                baseline_model = build_model(
+                    problem_type
+                )
+
+                baseline_model.fit(
+                    X_train,
+                    y_train
+                )
+
+                baseline_metrics = evaluate_model(
+                    baseline_model,
+                    X_test,
+                    y_test,
+                    problem_type
+                )
+
+
+                baseline_row = {
+                    "Method": "All Features",
+                    "Number of Features": X_train.shape[1]
+                }
+
+                baseline_row.update(
+                    baseline_metrics
+                )
+
+                evaluation_results.append(
+                    baseline_row
+                )
+
+
+                # --------------------------------------------------
+                # Evaluate Selected Features
+                # --------------------------------------------------
+
+                for method, result in results.items():
+
+                    selected_features = result[
+                        "selected_features"
+                    ]
+
+                    X_train_selected = X_train[
+                        selected_features
+                    ]
+
+                    X_test_selected = X_test[
+                        selected_features
+                    ]
+
+
+                    model = build_model(
+                        problem_type
+                    )
+
+                    model.fit(
+                        X_train_selected,
+                        y_train
+                    )
+
+
+                    metrics = evaluate_model(
+                        model,
+                        X_test_selected,
+                        y_test,
+                        problem_type
+                    )
+
+
+                    row = {
+                        "Method": method,
+                        "Number of Features": len(
+                            selected_features
+                        )
+                    }
+
+                    row.update(metrics)
+
+                    evaluation_results.append(
+                        row
+                    )
+
+
+                evaluation_df = pd.DataFrame(
+                    evaluation_results
+                )
+
+
+                st.session_state[
+                    "evaluation_results"
+                ] = evaluation_df
+
+
+        # --------------------------------------------------
+        # Display Evaluation Results
+        # --------------------------------------------------
+
+        if "evaluation_results" in st.session_state:
+
+            evaluation_df = st.session_state[
+                "evaluation_results"
+            ]
+
+
+            st.dataframe(
+                evaluation_df,
+                use_container_width=True,
+                hide_index=True
+            )
     except Exception as e:
         st.error(f"Preprocessing failed: {e}")
 
