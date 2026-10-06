@@ -3,11 +3,80 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+import re
+
+ID_PATTERNS = [
+    r"^id$",
+    r".*_id$",
+    r"^id_.*",
+    r".*id$",
+    r".*_code$",
+    r"^code$",
+]
 
 
-def identify_features(df, target_column):
+def is_id_like_name(column_name):
+    """
+    Detect ID-like columns based on column name.
+    """
+
+    normalized = str(column_name).strip().lower()
+
+    return any(
+        re.match(pattern, normalized)
+        for pattern in ID_PATTERNS
+    )
+
+
+def analyze_columns(df, high_cardinality_threshold=0.9):
+    """
+    Analyze columns and identify potential
+    ID-like and high-cardinality columns.
+    """
+
+    rows = []
+
+    for column in df.columns:
+
+        unique_count = df[column].nunique(
+            dropna=False
+        )
+
+        unique_ratio = (
+            unique_count / len(df)
+            if len(df) > 0
+            else 0
+        )
+
+        id_like = is_id_like_name(column)
+
+        high_cardinality = (
+            unique_ratio >= high_cardinality_threshold
+        )
+
+        if id_like:
+            status = "ID-like"
+
+        elif high_cardinality:
+            status = "High Cardinality"
+
+        else:
+            status = "Keep"
+
+        rows.append({
+            "Column": column,
+            "Data Type": str(df[column].dtype),
+            "Unique Values": unique_count,
+            "Unique %": round(unique_ratio * 100, 2),
+            "ID-like": id_like,
+            "High Cardinality": high_cardinality,
+            "Status": status
+        })
+
+    return pd.DataFrame(rows)
+
+def identify_features(X):
     # Separate numerical and categorical features.
-    X = df.drop(columns=[target_column])
     numerical_features = X.select_dtypes(include=["number"]).columns.tolist()
     categorical_features = X.select_dtypes(exclude=["number"]).columns.tolist()
     return numerical_features, categorical_features
