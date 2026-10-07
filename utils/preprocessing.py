@@ -104,3 +104,70 @@ def build_preprocessor(numerical_features, categorical_features, scale_numeric=T
                                  ("categorical", categorical_pipeline, categorical_features)], remainder="drop")
 
     return preprocessor
+
+
+def build_feature_mapping(preprocessor):
+    """
+    Build a mapping between processed features
+    and their original features.
+    """
+
+    mapping = []
+
+    for transformer_name, transformer, columns in (
+        preprocessor.transformers_
+    ):
+
+        if transformer_name == "remainder":
+            continue
+
+        # Numerical features
+        if transformer_name == "numerical":
+
+            for column in columns:
+
+                mapping.append({
+                    "Processed Feature": (
+                        f"numerical__{column}"
+                    ),
+                    "Original Feature": column,
+                    "Feature Type": "Numerical"
+                })
+
+
+        # Categorical features
+        elif transformer_name == "categorical":
+
+            encoder = transformer.named_steps["encoder"]
+
+            encoded_names = (
+                encoder.get_feature_names_out(columns)
+            )
+
+            for encoded_name in encoded_names:
+
+                original_feature = None
+
+                for column in columns:
+
+                    prefix = f"{column}_"
+
+                    if encoded_name.startswith(prefix):
+                        original_feature = column
+                        break
+
+
+                if original_feature is None:
+                    original_feature = encoded_name
+
+
+                mapping.append({
+                    "Processed Feature": (
+                        f"categorical__{encoded_name}"
+                    ),
+                    "Original Feature": original_feature,
+                    "Feature Type": "Categorical"
+                })
+
+
+    return pd.DataFrame(mapping)

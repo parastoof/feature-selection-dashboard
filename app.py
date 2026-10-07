@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
-from utils.preprocessing import (identify_features, build_preprocessor, analyze_columns)
-from utils.feature_selection import run_feature_selection
+from utils.preprocessing import (identify_features, build_preprocessor, 
+                                 analyze_columns, build_feature_mapping)
+from utils.feature_selection import run_feature_selection, aggregate_selected_features
 from utils.evaluation import (
     split_data,
     build_model,
@@ -111,9 +113,48 @@ if uploaded_file is not None:
     X = df.drop(columns=[target_column] + manually_removed)
     y = df[target_column]
 
-    # 6. Feature Types
-    st.subheader("6. Feature Types")
-    numerical_features, categorical_features = (identify_features(X))
+    # --------------------------------------------------
+    # 6. Train / Test Split
+    # --------------------------------------------------
+
+    st.subheader("6. Train / Test Split")
+
+    test_size = st.slider(
+        "Test set size",
+        min_value=0.1,
+        max_value=0.4,
+        value=0.2,
+        step=0.05
+    )
+
+    stratify = (y if problem_type == "Classification" else None)
+
+    try:
+
+        X_train, X_test, y_train, y_test = (
+            train_test_split(
+                X,
+                y,
+                test_size=test_size,
+                random_state=42,
+                stratify=stratify))
+
+    except Exception as e:
+        st.error(f"Train/test split failed: {e}")
+        st.stop()
+
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Training Rows", X_train.shape[0])
+
+    with col2:
+        st.metric("Test Rows", X_test.shape[0])
+
+
+    # 7. Feature Types
+    st.subheader("7. Feature Types")
+    numerical_features, categorical_features = (identify_features(X_train))
 
     col1, col2 = st.columns(2)
     with col1:
@@ -131,35 +172,49 @@ if uploaded_file is not None:
                      use_container_width=True,
                      hide_index=True)
 
-    # 7. Preprocessing
-    st.subheader("7. Preprocessing")
+    # 8. Preprocessing
+    st.subheader("8. Preprocessing")
     scale_numeric = st.checkbox("Apply Standard Scaling to numerical features", value=True)
 
     preprocessor = build_preprocessor(numerical_features,
                                       categorical_features,
                                       scale_numeric=scale_numeric)
     try:
-        X_processed = preprocessor.fit_transform(X)
+        X_train_processed = (preprocessor.fit_transform(X_train))
+        X_test_processed = (preprocessor.transform(X_test))
+        
         feature_names = (preprocessor.get_feature_names_out())
-        X_processed = pd.DataFrame(X_processed,
-                                    columns=feature_names,
-                                    index=X.index)
+        feature_mapping = build_feature_mapping(preprocessor)
+        
+        X_train_processed = pd.DataFrame(
+            X_train_processed,
+            columns=feature_names,
+            index=X_train.index)
 
+        X_test_processed = pd.DataFrame(
+            X_test_processed,
+            columns=feature_names,
+            index=X_test.index)
+        
+        st.subheader("Feature Mapping")
+        st.dataframe(feature_mapping,
+            use_container_width=True,
+            hide_index=True)
+        
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Original Features", X.shape[1])
+            st.metric("Original Features", X_train.shape[1])
 
         with col2:
-            st.metric("Processed Features", X_processed.shape[1])
+            st.metric("Processed Features", X_train_processed.shape[1])
 
         st.success("Preprocessing pipeline executed successfully.")
 
 
-        # 8. Feature Selection
-        st.subheader("8. Feature Selection")
+        # 9. Feature Selection
+        st.subheader("9. Feature Selection")
 
         if problem_type == "Regression":
-
             available_methods = ["Correlation", "Mutual Information",
                                  "F-test", "RFE", "L1", "Random Forest"]
         else:
@@ -172,7 +227,7 @@ if uploaded_file is not None:
 
         # Feature Selection Parameters
         if selected_methods:
-            max_features = X_processed.shape[1]
+            max_features = X_train_processed.shape[1]
 
             if max_features > 1:
                 n_features = st.slider("Number of features to select",
@@ -204,8 +259,8 @@ if uploaded_file is not None:
                 for i, method in enumerate(selected_methods):
                     try:
                         result = run_feature_selection(method=method,
-                                                       X=X_processed,
-                                                       y=y,
+                                                       X=X_train_processed,
+                                                       y=y_train,
                                                        problem_type=problem_type,
                                                        k=n_features,
                                                        correlation_threshold=(correlation_threshold))
@@ -217,40 +272,153 @@ if uploaded_file is not None:
                     progress.progress((i + 1) / len(selected_methods))
 
                 st.session_state["feature_selection_results"] = results
+                st.session_state.pop("evaluation_results", None)
                 st.success("Feature selection completed successfully.")
 
-        # 9. Feature Selection Results
-
+        # Feature Selection Results
         if "feature_selection_results" in st.session_state:
             results = st.session_state["feature_selection_results"]
-
-            st.subheader("9. Feature Selection Results")
-
+            st.subheader("Feature Selection Results")
             comparison_data = []
 
             for method, result in results.items():
 
-                selected_features = result["selected_features"]
+                selected_features = result[
+                    "selected_features"
+                ]
 
-                for rank, feature in enumerate(selected_features, start=1):
+                aggregated = aggregate_selected_features(
+                    selected_features,
+                    feature_mapping
+                )
+
+                aggregated = aggregated.sort_values(
+                    "Selection %",
+                    ascending=False
+                )
+
+                for rank, (_, row) in enumerate(
+                    aggregated.iterrows(),
+                    start=1
+                ):
 
                     comparison_data.append({
                         "Method": method,
-                        "Feature": feature,
+                        "Feature": row["Original Feature"],
+                        "Selected Encoded": (
+                            row["Selected Encoded Features"]
+                        ),
+                        "Total Encoded": (
+                            row["Total Encoded Features"]
+                        ),
+                        "Selection %": row["Selection %"],
                         "Rank": rank
                     })
 
+
             comparison_df = pd.DataFrame(comparison_data)
 
-            st.dataframe(
-                comparison_df,
-                use_container_width=True,
-                hide_index=True
+            st.subheader("Comparison Matrix")
+
+            original_features = feature_mapping[
+                "Original Feature"
+            ].unique()
+
+
+            comparison_matrix = pd.DataFrame(
+                index=original_features
             )
+
+
+            for method, result in results.items():
+
+                selected_features = result[
+                    "selected_features"
+                ]
+
+                aggregated = aggregate_selected_features(
+                    selected_features,
+                    feature_mapping
+                )
+
+                selected_original_features = set(
+                    aggregated["Original Feature"]
+                )
+
+                comparison_matrix[method] = [
+                    "✓"
+                    if feature in selected_original_features
+                    else ""
+                    for feature in comparison_matrix.index
+                ]
+
+
+            comparison_matrix.index.name = "Feature"
+
+
+            st.dataframe(
+                comparison_matrix,
+                use_container_width=True
+            )
+            st.subheader("Feature Selection Consensus")
+
+        consensus_data = []
+
+
+        for feature in comparison_matrix.index:
+
+            selected_by = 0
+
+            for method in results:
+
+                if comparison_matrix.loc[
+                    feature,
+                    method
+                ] == "✓":
+
+                    selected_by += 1
+
+
+            consensus_percentage = (
+                selected_by /
+                len(results) *
+                100
+            )
+
+
+            consensus_data.append({
+                "Feature": feature,
+                "Selected By": selected_by,
+                "Total Methods": len(results),
+                "Consensus %": round(
+                    consensus_percentage,
+                    1
+                )
+            })
+
+
+        consensus_df = pd.DataFrame(
+            consensus_data
+        )
+
+
+        consensus_df = consensus_df.sort_values(
+            "Consensus %",
+            ascending=False
+        )
+
+
+        st.dataframe(
+            consensus_df,
+            use_container_width=True,
+            hide_index=True
+        )
 
         # 10. Model Evaluation
         st.subheader("10. Model Evaluation")
-        st.markdown("""Compare model performance before and after feature selection.""")
+        st.markdown("""Evaluate the baseline model using all features
+                        and compare it with models trained using
+                        selected features.""")
 
         evaluate_models = st.button("Evaluate Feature Selection", type="primary")
 
@@ -260,21 +428,15 @@ if uploaded_file is not None:
 
             else:
                 results = st.session_state["feature_selection_results"]
-
-                # Train / Test Split
-                X_train, X_test, y_train, y_test = split_data(X_processed, y,
-                                                              problem_type=problem_type,
-                                                              test_size=0.2,
-                                                              random_state=42)
                 evaluation_results = []
 
                 # Baseline Model
                 baseline_model = build_model(problem_type)
-                baseline_model.fit(X_train, y_train)
-                baseline_metrics = evaluate_model(baseline_model, X_test, y_test, problem_type)
+                baseline_model.fit(X_train_processed, y_train)
+                baseline_metrics = evaluate_model(baseline_model, X_test_processed, y_test, problem_type)
 
                 baseline_row = {"Method": "All Features",
-                                "Number of Features": X_train.shape[1]}
+                                "Number of Features": X_train_processed.shape[1]}
                 baseline_row.update(baseline_metrics)
                 evaluation_results.append(baseline_row)
 
@@ -282,8 +444,8 @@ if uploaded_file is not None:
                 for method, result in results.items():
                     selected_features = result["selected_features"]
 
-                    X_train_selected = X_train[selected_features]
-                    X_test_selected = X_test[selected_features]
+                    X_train_selected = X_train_processed[selected_features]
+                    X_test_selected = X_test_processed[selected_features]
 
                     model = build_model(problem_type)
                     model.fit(X_train_selected, y_train)

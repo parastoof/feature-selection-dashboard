@@ -223,3 +223,62 @@ def run_feature_selection(
         raise ValueError(
             f"Unknown feature selection method: {method}"
         )
+
+
+def aggregate_selected_features(selected_features, feature_mapping):
+    """
+    Aggregate encoded selected features
+    back to their original features.
+    """
+
+    selected_mapping = feature_mapping[
+        feature_mapping["Processed Feature"].isin(
+            selected_features
+        )].copy()
+
+    if selected_mapping.empty:
+        return pd.DataFrame(
+            columns=[
+                "Original Feature",
+                "Selected Encoded Features",
+                "Total Encoded Features",
+                "Selection %"])
+
+
+    selected_counts = (
+        selected_mapping
+        .groupby("Original Feature")
+        .size()
+        .rename("Selected Encoded Features")
+    )
+
+
+    total_counts = (
+        feature_mapping
+        .groupby("Original Feature")
+        .size()
+        .rename("Total Encoded Features")
+    )
+
+
+    result = pd.concat([selected_counts,
+                        total_counts], axis=1).fillna(0)
+
+
+    result["Selected Encoded Features"] = (
+        result["Selected Encoded Features"]
+        .astype(int))
+
+    result["Total Encoded Features"] = (
+        result["Total Encoded Features"]
+        .astype(int))
+
+
+    result["Selection %"] = (
+        result["Selected Encoded Features"]
+        /
+        result["Total Encoded Features"]
+        * 100).round(1)
+
+
+    return result.reset_index()
